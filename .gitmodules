@@ -1,4 +1,0 @@
-[submodule "aoo"]
-	path = main/aoo
-	url = https://git.iem.at/cm/aoo.git
-	branch = esp32

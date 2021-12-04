@@ -7,5 +7,7 @@ set(AOO_CODEC_OPUS OFF CACHE BOOL "use Opus codec")
 
 add_library(aoo STATIC aoo)
 
+target_include_directories(${COMPONENT_LIB} PUBLIC "aoo/include")
+
 target_link_libraries(${COMPONENT_LIB} PUBLIC aoo)
 

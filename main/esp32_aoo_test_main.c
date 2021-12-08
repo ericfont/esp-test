@@ -1,3 +1,21 @@
+#include "esp_system.h"
+
+#define USE_AOO_NET 1
+#include "aoo/include/aoo/aoo_defines.h"
+
+#include "aoo/include/aoo/aoo.h"
+#include "aoo/include/aoo/aoo_sink.h"
+#include "aoo/include/aoo/aoo_source.h"
+
+#include "aoo/aoo_client.h"
+#include "aoo/aoo_server.h"
+
+#include <netdb.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <arpa/inet.h>
+#include <errno.h>
+
 /* Ethernet Basic Example
    This example code is in the Public Domain (or CC0 licensed, at your option.)
    Unless required by applicable law or agreed to in writing, this
@@ -155,4 +173,29 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_netif_attach(eth_netif, esp_eth_new_netif_glue(eth_handle)));
     /* start Ethernet driver state machine */
     ESP_ERROR_CHECK(esp_eth_start(eth_handle));
+
+    aoo_initialize();
+
+    ESP_LOGI(TAG, "AOO version: %s\n", aoo_getVersionString());
+
+    AooSource *source = AooSource_new(0, 0, NULL);
+    AooSink *sink = AooSink_new(0, 0, NULL);
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_addr.s_addr = htonl(0x7F000001);
+    sa.sin_port = htons(50000);
+    AooClient *client = AooClient_new(&sa, sizeof(sa), 0, NULL);
+    AooServer *server = AooServer_new(40000, 0, NULL);
+
+    AooSource_free(source);
+    AooSink_free(sink);
+    AooClient_free(client);
+    AooServer_free(server);
+
+
+//    AooClient *aoo_client AooClient_new(
+ //       const void *address, AooAddrSize addrlen,
+   //     AooFlag flags, AooError *err);
+
 }

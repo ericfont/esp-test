@@ -137,7 +137,7 @@ menu "Example Configuration"
 
     config EXAMPLE_ETH_PHY_RST_GPIO
         int "PHY Reset GPIO number"
-        default 5
+        default 16
         help
             Set the GPIO number used to reset PHY chip.
             Set to -1 to disable PHY chip hardware reset.

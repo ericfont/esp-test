@@ -1,14 +1,20 @@
 #include "esp_system.h"
 
 #define USE_AOO_NET 1
-#include "aoo/include/aoo/aoo_defines.h"
+#include "aoo/aoo_net.h"
+#include "aoo/aoo_defines.h"
 
-#include "aoo/include/aoo/aoo.h"
-#include "aoo/include/aoo/aoo_sink.h"
-#include "aoo/include/aoo/aoo_source.h"
+#include "aoo/aoo.h"
+#include "aoo/aoo_sink.h"
+#include "aoo/aoo_source.h"
+
+#include "aoo/aoo_controls.h"
+#include "aoo/aoo_events.h"
 
 #include "aoo/aoo_client.h"
 #include "aoo/aoo_server.h"
+
+#include "aoo/aoo_codec.h"
 
 #include <netdb.h>
 #include <netinet/in.h>

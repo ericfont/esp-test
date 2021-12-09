@@ -295,10 +295,11 @@ void app_main(void)
     }
 
 restart:
-    if (source) {
-        printf("free AooSource\n");
-        AooSource_free(source);
-    }
+// ignore free AooSource because results in exception crash
+//    if (source) {
+//        printf("free AooSource\n");
+//        AooSource_free(source);
+//    }
     printf("\n");
     if (sink) {
         printf("free AooSink\n");

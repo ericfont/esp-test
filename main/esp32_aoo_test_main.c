@@ -17,6 +17,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_system.h"
+#include "esp_log.h"
 #include "esp_spi_flash.h"
 #include "soc/rtc_wdt.h"
 
@@ -47,6 +48,8 @@
 #define CODEC_PCM
 // #define CODEC_OPUS
 
+static const char *TAG = "aoo_test";
+
 AooSample input[CHANNELS][BLOCKSIZE * NUMBLOCKS];
 AooSample output[CHANNELS][BLOCKSIZE * NUMBLOCKS];
 
@@ -64,7 +67,7 @@ AooInt32 AOO_CALL mySendFunction(
     } else if (user == sink) {
         AooSink_handleMessage(user, data, size, address, addrlen);
     } else {
-        printf("mySendFunction: bug\n");
+        ESP_LOGI(TAG, "mySendFunction: bug\n");
     }
 
     // usually, you would return the result of the send() function.
@@ -74,14 +77,14 @@ AooInt32 AOO_CALL mySendFunction(
 void AOO_CALL myEventHandler(
         void *user, const AooEvent *event, AooThreadLevel level)
 {
-    printf("[event] %s: ", user == source ? "AooSource" : "AooSink");
+    ESP_LOGI(TAG, "[event] %s: ", user == source ? "AooSource" : "AooSink");
     switch (event->type)
     {
     case kAooEventPing:
     {
         AooEventPing *ping = (AooEventPing *)event;
         AooSeconds latency = aoo_ntpTimeDuration(ping->t1, ping->t2);
-        printf("got ping (latency: %f ms)\n", latency * 1000.0);
+        ESP_LOGI(TAG, "got ping (latency: %f ms)\n", latency * 1000.0);
         break;
     }
     case kAooEventPingReply:
@@ -89,30 +92,30 @@ void AOO_CALL myEventHandler(
         AooEventPingReply *ping = (AooEventPingReply *)event;
         AooSeconds latency = aoo_ntpTimeDuration(ping->t2, ping->t3);
         AooSeconds rtt = aoo_ntpTimeDuration(ping->t1, ping->t3);
-        printf("got ping reply (latency: %f ms, rtt: %f ms)\n",
+        ESP_LOGI(TAG, "got ping reply (latency: %f ms, rtt: %f ms)\n",
                latency * 1000.0, rtt * 1000);
         break;
     }
     case kAooEventSourceAdd:
-        printf("source added\n");
+        ESP_LOGI(TAG, "source added\n");
         break;
     case kAooEventStreamStart:
-        printf("stream started\n");
+        ESP_LOGI(TAG, "stream started\n");
         break;
     case kAooEventStreamStop:
-        printf("stream stopped\n");
+        ESP_LOGI(TAG, "stream stopped\n");
         break;
     case kAooEventStreamState:
     {
         AooEventStreamState *state = (AooEventStreamState *)event;
         const char *label = state->state == kAooStreamStateActive ?
                     "active" : "inactive";
-        printf("stream state changed to %s\n", label);
+        ESP_LOGI(TAG, "stream state changed to %s\n", label);
         break;
     }
     // handle other events
     default:
-        printf("other\n");
+        ESP_LOGI(TAG, "other\n");
         break;
     }
 }
@@ -137,7 +140,7 @@ void myLogFunction(AooLogLevel level, const AooChar *msg, ...)
         label = "aoo";
         break;
     }
-    printf("[%s] %s\n", label, msg);
+    ESP_LOGI(TAG, "[%s] %s\n", label, msg);
 }
 
 void sleep_millis(int ms) {
@@ -149,31 +152,31 @@ void app_main(void)
     // Print chip information
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
-    printf("This is %s chip with %d CPU core(s), WiFi%s%s, ",
+    ESP_LOGI(TAG, "This is %s chip with %d CPU core(s), WiFi%s%s, ",
             CONFIG_IDF_TARGET,
             chip_info.cores,
             (chip_info.features & CHIP_FEATURE_BT) ? "/BT" : "",
             (chip_info.features & CHIP_FEATURE_BLE) ? "/BLE" : "");
 
-    printf("silicon revision %d, ", chip_info.revision);
+    ESP_LOGI(TAG, "silicon revision %d, ", chip_info.revision);
 
-    printf("%dMB %s flash\n", spi_flash_get_chip_size() / (1024 * 1024),
+    ESP_LOGI(TAG, "%dMB %s flash\n", spi_flash_get_chip_size() / (1024 * 1024),
             (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "embedded" : "external");
 
-    printf("Minimum free heap size: %d bytes\n", esp_get_minimum_free_heap_size());
+    ESP_LOGI(TAG, "Minimum free heap size: %d bytes\n", esp_get_minimum_free_heap_size());
 
     sleep_millis(100);
 
-    printf("try to initialize ethernet...\n");
+    ESP_LOGI(TAG, "try to initialize ethernet...\n");
     eth_initialize();
 
     sleep_millis(100);
 
-    printf("try to aoo_initialize()\n");
+    ESP_LOGI(TAG, "try to aoo_initialize()\n");
 
     aoo_initializeEx(myLogFunction, NULL);
 
-    printf("create input signal\n");
+    ESP_LOGI(TAG, "create input signal\n");
     for (int i = 0; i < (NUMBLOCKS * BLOCKSIZE); ++i) {
         AooSample value = sin((AooSample)i / BLOCKSIZE);
         for (int j = 0; j < CHANNELS; ++j) {
@@ -181,7 +184,7 @@ void app_main(void)
         }
     }
 
-    printf("setup socket addresses\n");
+    ESP_LOGI(TAG, "setup socket addresses\n");
     struct sockaddr_in source_addr;
     source_addr.sin_family = AF_INET;
     source_addr.sin_port = htons(SOURCE_PORT);
@@ -194,58 +197,58 @@ void app_main(void)
 
     sleep_millis(1000);
 
-    printf("\n");
+    ESP_LOGI(TAG, "\n");
 
-    printf("create AooSource\n");
+    ESP_LOGI(TAG, "create AooSource\n");
     AooError e;
     source = AooSource_new(SOURCE_ID, 0, &e);
     if (!source) {
-        printf("couldn't create: %s\n", aoo_strerror(e));
+        ESP_LOGI(TAG, "couldn't create: %s\n", aoo_strerror(e));
         goto restart;
     }
-    printf("AooSource: set event handler\n");
+    ESP_LOGI(TAG, "AooSource: set event handler\n");
     AooSource_setEventHandler(source, myEventHandler, source, kAooEventModePoll);
-    printf("AooSource: set xrun detection\n");
+    ESP_LOGI(TAG, "AooSource: set xrun detection\n");
     AooSource_setXRunDetection(source, kAooFalse);
-    printf("AooSource: set dynamic resampling\n");
+    ESP_LOGI(TAG, "AooSource: set dynamic resampling\n");
     AooSource_setDynamicResampling(source, kAooFalse);
-    printf("AooSource: set buffer size\n");
+    ESP_LOGI(TAG, "AooSource: set buffer size\n");
     AooSource_setBufferSize(source, 0.025);
-    printf("AooSource: set resend buffer size\n");
+    ESP_LOGI(TAG, "AooSource: set resend buffer size\n");
     AooSource_setResendBufferSize(source, 0);
-    printf("AooSource: setup\n");
+    ESP_LOGI(TAG, "AooSource: setup\n");
     AooSource_setup(source, SAMPLERATE, BLOCKSIZE, CHANNELS);
-    printf("AooSource: add sink\n");
+    ESP_LOGI(TAG, "AooSource: add sink\n");
     AooEndpoint ep;
     ep.address = &sink_addr;
     ep.addrlen = sizeof(sink_addr);
     ep.id = SINK_ID;
     AooSource_addSink(source, &ep, kAooSinkActive);
 
-    printf("\n");
+    ESP_LOGI(TAG, "\n");
 
-    printf("create AooSink\n");
+    ESP_LOGI(TAG, "create AooSink\n");
     sink = AooSink_new(SINK_ID, 0, &e);
     if (!sink) {
-        printf("couldn't create: %s\n", aoo_strerror(e));
+        ESP_LOGI(TAG, "couldn't create: %s\n", aoo_strerror(e));
         goto restart;
     }
-    printf("AooSink: set event handler\n");
+    ESP_LOGI(TAG, "AooSink: set event handler\n");
     AooSink_setEventHandler(sink, myEventHandler, source, kAooEventModePoll);
-    printf("AooSink: set dynamic resampling\n");
+    ESP_LOGI(TAG, "AooSink: set dynamic resampling\n");
     AooSink_setDynamicResampling(sink, kAooFalse);
-    printf("AooSink: set xrun detection\n");
+    ESP_LOGI(TAG, "AooSink: set xrun detection\n");
     AooSink_setXRunDetection(sink, kAooFalse);
-    printf("AooSink: set buffer size\n");
+    ESP_LOGI(TAG, "AooSink: set buffer size\n");
     AooSink_setBufferSize(sink, SINK_BUFSIZE * 0.001);
-    printf("AooSink: set resend data\n");
+    ESP_LOGI(TAG, "AooSink: set resend data\n");
     AooSink_setResendData(sink, kAooFalse);
-    printf("AooSink: setup\n");
+    ESP_LOGI(TAG, "AooSink: setup\n");
     AooSink_setup(sink, SAMPLERATE, BLOCKSIZE, CHANNELS);
 
-    printf("\n");
+    ESP_LOGI(TAG, "\n");
 
-    printf("AooSource: set format\n");
+    ESP_LOGI(TAG, "AooSource: set format\n");
 #ifdef CODEC_PCM
     AooFormatPcm format;
     AooFormatPcm_init(&format, FORMAT_CHANNELS, FORMAT_SAMPLERATE,
@@ -258,17 +261,17 @@ void app_main(void)
 #endif
     AooSource_setFormat(source, &format.header);
 
-    printf("AooSource: start stream\n");
+    ESP_LOGI(TAG, "AooSource: start stream\n");
     AooSource_startStream(source, NULL);
 
-    printf("\n");
+    ESP_LOGI(TAG, "\n");
 
     for (int k = 0; k < NUMLOOPS; ++k) {
-        printf("# loop iteration %d\n\n", k);
+        ESP_LOGI(TAG, "# loop iteration %d\n\n", k);
 
-        printf("send audio\n---\n");
+        ESP_LOGI(TAG, "send audio\n---\n");
         for (int i = 0; i < NUMBLOCKS; ++i) {
-            printf("send block %d\n", i);
+            ESP_LOGI(TAG, "send block %d\n", i);
             AooSample *inChannels[CHANNELS];
             for (int i = 0; i < CHANNELS; ++i) {
                 inChannels[i] = input[i] + (i * BLOCKSIZE);
@@ -276,14 +279,14 @@ void app_main(void)
             AooNtpTime t = aoo_getCurrentNtpTime();
             AooSource_process(source, inChannels, BLOCKSIZE, t);
             AooSource_send(source, mySendFunction, sink);
-            printf("---\n");
+            ESP_LOGI(TAG, "---\n");
         }
 
-        printf("\n");
+        ESP_LOGI(TAG, "\n");
 
-        printf("receive audio\n---\n");
+        ESP_LOGI(TAG, "receive audio\n---\n");
         for (int i = 0; i < NUMBLOCKS; ++i) {
-            printf("receive block %d\n", i);
+            ESP_LOGI(TAG, "receive block %d\n", i);
             AooSample *outChannels[CHANNELS];
             for (int i = 0; i < CHANNELS; ++i) {
                 outChannels[i] = output[i] + (i * BLOCKSIZE);
@@ -292,36 +295,36 @@ void app_main(void)
             AooSink_process(sink, outChannels, BLOCKSIZE, t);
             AooSink_send(sink, mySendFunction, source);
             AooSink_pollEvents(sink);
-            printf("---\n");
+            ESP_LOGI(TAG, "---\n");
         }
 
-        printf("AooSource: poll events\n");
+        ESP_LOGI(TAG, "AooSource: poll events\n");
         AooSource_pollEvents(source);
 
-        printf("\n");
+        ESP_LOGI(TAG, "\n");
     }
 
 restart:
 // ignore free AooSource because results in exception crash
 //    if (source) {
-//        printf("free AooSource\n");
+//        ESP_LOGI(TAG, "free AooSource\n");
 //        AooSource_free(source);
 //    }
-    printf("\n");
+    ESP_LOGI(TAG, "\n");
     if (sink) {
-        printf("free AooSink\n");
+        ESP_LOGI(TAG, "free AooSink\n");
         AooSink_free(sink);
     }
-    printf("\n");
+    ESP_LOGI(TAG, "\n");
 
-    printf("aoo_terminate()\n");
+    ESP_LOGI(TAG, "aoo_terminate()\n");
     aoo_terminate();
 
     for (int i = 10; i >= 0; i--) {
-        printf("Restarting in %d seconds...\n", i);
+        ESP_LOGI(TAG, "Restarting in %d seconds...\n", i);
         sleep_millis(1000);
     }
-    printf("Restarting now.\n");
+    ESP_LOGI(TAG, "Restarting now.\n");
     fflush(stdout);
     esp_restart();
 }

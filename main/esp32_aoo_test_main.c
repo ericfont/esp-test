@@ -1,5 +1,7 @@
 // test app for using AOO library on ESP32 board
 
+#include "ethernet_basic.h"
+
 #include "aoo/aoo_source.h"
 #include "aoo/aoo_sink.h"
 #include "aoo/codec/aoo_pcm.h"
@@ -160,9 +162,14 @@ void app_main(void)
 
     printf("Minimum free heap size: %d bytes\n", esp_get_minimum_free_heap_size());
 
-    sleep_millis(1000);
+    sleep_millis(100);
 
-    printf("aoo_initialize()\n");
+    printf("try to initialize ethernet...\n");
+    eth_initialize();
+
+    sleep_millis(100);
+
+    printf("try to aoo_initialize()\n");
 
     aoo_initializeEx(myLogFunction, NULL);
 

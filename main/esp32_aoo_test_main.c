@@ -2,6 +2,8 @@
 
 #include "ethernet_basic.h"
 
+#define AOO_NET_USE_IPv6 0
+
 #include "aoo/aoo_source.h"
 #include "aoo/aoo_sink.h"
 #include "aoo/codec/aoo_pcm.h"
@@ -60,6 +62,12 @@ AooInt32 AOO_CALL mySendFunction(
         void *user, const AooByte *data, AooInt32 size,
         const void *address, AooAddrSize addrlen, AooFlag flag)
 {
+    ESP_LOGI(TAG, "mySendFunction: size %d, addrlen %d, flag %x, address bytes:", size, addrlen, flag);
+    const unsigned char *bytesAddress = address;
+    for (int i=0; i<addrlen; i++)
+        printf("%d ", bytesAddress[i]);
+    printf("\n");
+
     // usually, you would send the packet to the specified
     // socket address. here we just pass it directly to the source/sink.
     if (user == source) {
@@ -188,12 +196,12 @@ void app_main(void)
     struct sockaddr_in source_addr;
     source_addr.sin_family = AF_INET;
     source_addr.sin_port = htons(SOURCE_PORT);
-    source_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    source_addr.sin_addr.s_addr = inet_addr("192.168.1.6");//htonl(INADDR_LOOPBACK);
 
     struct sockaddr_in sink_addr;
     sink_addr.sin_family = AF_INET;
     sink_addr.sin_port = htons(SINK_PORT);
-    sink_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    sink_addr.sin_addr.s_addr = inet_addr("192.168.1.6");//htonl(INADDR_LOOPBACK);
 
     sleep_millis(1000);
 

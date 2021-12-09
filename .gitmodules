@@ -1,4 +1,0 @@
-[submodule "main/aoo"]
-	path = main/aoo
-	url = https://github.com/ericfont/aoo.git
-	branch = esp32

@@ -1,207 +1,319 @@
-#include "esp_system.h"
+// test app for using AOO library on ESP32 board
 
-#define USE_AOO_NET 1
-#include "aoo/aoo_net.h"
-#include "aoo/aoo_defines.h"
-
-#include "aoo/aoo.h"
-#include "aoo/aoo_sink.h"
 #include "aoo/aoo_source.h"
+#include "aoo/aoo_sink.h"
+#include "aoo/codec/aoo_pcm.h"
+#define AOO_OPUS_MULTISTREAM_H "opus/include/opus_multistream.h"
+#include "aoo/codec/aoo_opus.h"
 
-#include "aoo/aoo_controls.h"
-#include "aoo/aoo_events.h"
-
-#include "aoo/aoo_client.h"
-#include "aoo/aoo_server.h"
-
-#include "aoo/aoo_codec.h"
-
-#include <netdb.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <arpa/inet.h>
-#include <errno.h>
-
-/* Ethernet Basic Example
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
-*/
 #include <stdio.h>
-#include <string.h>
+#include <math.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+#include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_netif.h"
-#include "esp_eth.h"
-#include "esp_event.h"
-#include "esp_log.h"
-#include "driver/gpio.h"
-#include "sdkconfig.h"
-#if CONFIG_ETH_USE_SPI_ETHERNET
-#include "driver/spi_master.h"
-#endif // CONFIG_ETH_USE_SPI_ETHERNET
+#include "esp_system.h"
+#include "esp_spi_flash.h"
+#include "soc/rtc_wdt.h"
 
-static const char *TAG = "eth_example";
+#define SOURCE_PORT 9998
+#define SOURCE_ID 0
+#define SINK_PORT 9999
+#define SINK_ID 0
+#define SINK_BUFSIZE 100
 
-/** Event handler for Ethernet events */
-static void eth_event_handler(void *arg, esp_event_base_t event_base,
-                              int32_t event_id, void *event_data)
+// "native" settings
+#define SAMPLERATE 44100
+#define BLOCKSIZE 256
+#define CHANNELS 1
+
+// format settings (to test reblocking/resampling)
+#define FORMAT_SAMPLERATE 44100
+#define FORMAT_BLOCKSIZE 256
+#define FORMAT_CHANNELS 1
+
+// we send/receive NUMBLOCKS * NUMLOOPS blocks
+
+// number of blocks to send in a row
+// to let AOO sink jitter buffer fill up
+#define NUMBLOCKS 8
+// to test long term stability
+#define NUMLOOPS 8
+
+#define CODEC_PCM
+// #define CODEC_OPUS
+
+AooSample input[CHANNELS][BLOCKSIZE * NUMBLOCKS];
+AooSample output[CHANNELS][BLOCKSIZE * NUMBLOCKS];
+
+AooSource *source;
+AooSink *sink;
+
+AooInt32 AOO_CALL mySendFunction(
+        void *user, const AooByte *data, AooInt32 size,
+        const void *address, AooAddrSize addrlen, AooFlag flag)
 {
-    uint8_t mac_addr[6] = {0};
-    /* we can get the ethernet driver handle from event data */
-    esp_eth_handle_t eth_handle = *(esp_eth_handle_t *)event_data;
+    // usually, you would send the packet to the specified
+    // socket address. here we just pass it directly to the source/sink.
+    if (user == source) {
+        AooSource_handleMessage(user, data, size, address, addrlen);
+    } else if (user == sink) {
+        AooSink_handleMessage(user, data, size, address, addrlen);
+    } else {
+        printf("mySendFunction: bug\n");
+    }
 
-    switch (event_id) {
-    case ETHERNET_EVENT_CONNECTED:
-        esp_eth_ioctl(eth_handle, ETH_CMD_G_MAC_ADDR, mac_addr);
-        ESP_LOGI(TAG, "Ethernet Link Up");
-        ESP_LOGI(TAG, "Ethernet HW Addr %02x:%02x:%02x:%02x:%02x:%02x",
-                 mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+    // usually, you would return the result of the send() function.
+    return 0;
+}
+
+void AOO_CALL myEventHandler(
+        void *user, const AooEvent *event, AooThreadLevel level)
+{
+    printf("[event] %s: ", user == source ? "AooSource" : "AooSink");
+    switch (event->type)
+    {
+    case kAooEventPing:
+    {
+        AooEventPing *ping = (AooEventPing *)event;
+        AooSeconds latency = aoo_ntpTimeDuration(ping->t1, ping->t2);
+        printf("got ping (latency: %f ms)\n", latency * 1000.0);
         break;
-    case ETHERNET_EVENT_DISCONNECTED:
-        ESP_LOGI(TAG, "Ethernet Link Down");
+    }
+    case kAooEventPingReply:
+    {
+        AooEventPingReply *ping = (AooEventPingReply *)event;
+        AooSeconds latency = aoo_ntpTimeDuration(ping->t2, ping->t3);
+        AooSeconds rtt = aoo_ntpTimeDuration(ping->t1, ping->t3);
+        printf("got ping reply (latency: %f ms, rtt: %f ms)\n",
+               latency * 1000.0, rtt * 1000);
         break;
-    case ETHERNET_EVENT_START:
-        ESP_LOGI(TAG, "Ethernet Started");
+    }
+    case kAooEventSourceAdd:
+        printf("source added\n");
         break;
-    case ETHERNET_EVENT_STOP:
-        ESP_LOGI(TAG, "Ethernet Stopped");
+    case kAooEventStreamStart:
+        printf("stream started\n");
         break;
+    case kAooEventStreamStop:
+        printf("stream stopped\n");
+        break;
+    case kAooEventStreamState:
+    {
+        AooEventStreamState *state = (AooEventStreamState *)event;
+        const char *label = state->state == kAooStreamStateActive ?
+                    "active" : "inactive";
+        printf("stream state changed to %s\n", label);
+        break;
+    }
+    // handle other events
     default:
+        printf("other\n");
         break;
     }
 }
 
-/** Event handler for IP_EVENT_ETH_GOT_IP */
-static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
-                                 int32_t event_id, void *event_data)
+void myLogFunction(AooLogLevel level, const AooChar *msg, ...)
 {
-    ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
-    const esp_netif_ip_info_t *ip_info = &event->ip_info;
+    const char *label;
+    switch (level) {
+    case kAooLogLevelError:
+        label = "error";
+        break;
+    case kAooLogLevelWarning:
+        label = "warning";
+        break;
+    case kAooLogLevelVerbose:
+        label = "verbose";
+        break;
+    case kAooLogLevelDebug:
+        label = "debug";
+        break;
+    default:
+        label = "aoo";
+        break;
+    }
+    printf("[%s] %s\n", label, msg);
+}
 
-    ESP_LOGI(TAG, "Ethernet Got IP Address");
-    ESP_LOGI(TAG, "~~~~~~~~~~~");
-    ESP_LOGI(TAG, "ETHIP:" IPSTR, IP2STR(&ip_info->ip));
-    ESP_LOGI(TAG, "ETHMASK:" IPSTR, IP2STR(&ip_info->netmask));
-    ESP_LOGI(TAG, "ETHGW:" IPSTR, IP2STR(&ip_info->gw));
-    ESP_LOGI(TAG, "~~~~~~~~~~~");
+void sleep_millis(int ms) {
+    vTaskDelay(ms / portTICK_PERIOD_MS);
 }
 
 void app_main(void)
 {
-    // Initialize TCP/IP network interface (should be called only once in application)
-    ESP_ERROR_CHECK(esp_netif_init());
-    // Create default event loop that running in background
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_config_t cfg = ESP_NETIF_DEFAULT_ETH();
-    esp_netif_t *eth_netif = esp_netif_new(&cfg);
-    // Set default handlers to process TCP/IP stuffs
-    ESP_ERROR_CHECK(esp_eth_set_default_handlers(eth_netif));
-    // Register user defined event handers
-    ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, &eth_event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &got_ip_event_handler, NULL));
+    // Print chip information
+    esp_chip_info_t chip_info;
+    esp_chip_info(&chip_info);
+    printf("This is %s chip with %d CPU core(s), WiFi%s%s, ",
+            CONFIG_IDF_TARGET,
+            chip_info.cores,
+            (chip_info.features & CHIP_FEATURE_BT) ? "/BT" : "",
+            (chip_info.features & CHIP_FEATURE_BLE) ? "/BLE" : "");
 
-    eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
-    eth_phy_config_t phy_config = ETH_PHY_DEFAULT_CONFIG();
-    phy_config.phy_addr = CONFIG_EXAMPLE_ETH_PHY_ADDR;
-    phy_config.reset_gpio_num = CONFIG_EXAMPLE_ETH_PHY_RST_GPIO;
-#if CONFIG_EXAMPLE_USE_INTERNAL_ETHERNET
-    mac_config.smi_mdc_gpio_num = CONFIG_EXAMPLE_ETH_MDC_GPIO;
-    mac_config.smi_mdio_gpio_num = CONFIG_EXAMPLE_ETH_MDIO_GPIO;
-    esp_eth_mac_t *mac = esp_eth_mac_new_esp32(&mac_config);
-#if CONFIG_EXAMPLE_ETH_PHY_IP101
-    esp_eth_phy_t *phy = esp_eth_phy_new_ip101(&phy_config);
-#elif CONFIG_EXAMPLE_ETH_PHY_RTL8201
-    esp_eth_phy_t *phy = esp_eth_phy_new_rtl8201(&phy_config);
-#elif CONFIG_EXAMPLE_ETH_PHY_LAN8720
-    esp_eth_phy_t *phy = esp_eth_phy_new_lan8720(&phy_config);
-#elif CONFIG_EXAMPLE_ETH_PHY_DP83848
-    esp_eth_phy_t *phy = esp_eth_phy_new_dp83848(&phy_config);
-#elif CONFIG_EXAMPLE_ETH_PHY_KSZ8041
-    esp_eth_phy_t *phy = esp_eth_phy_new_ksz8041(&phy_config);
+    printf("silicon revision %d, ", chip_info.revision);
+
+    printf("%dMB %s flash\n", spi_flash_get_chip_size() / (1024 * 1024),
+            (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "embedded" : "external");
+
+    printf("Minimum free heap size: %d bytes\n", esp_get_minimum_free_heap_size());
+
+    sleep_millis(1000);
+
+    printf("aoo_initialize()\n");
+
+    aoo_initializeEx(myLogFunction, NULL);
+
+    printf("create input signal\n");
+    for (int i = 0; i < (NUMBLOCKS * BLOCKSIZE); ++i) {
+        AooSample value = sin((AooSample)i / BLOCKSIZE);
+        for (int j = 0; j < CHANNELS; ++j) {
+            input[j][i] = value;
+        }
+    }
+
+    printf("setup socket addresses\n");
+    struct sockaddr_in source_addr;
+    source_addr.sin_family = AF_INET;
+    source_addr.sin_port = htons(SOURCE_PORT);
+    source_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+    struct sockaddr_in sink_addr;
+    sink_addr.sin_family = AF_INET;
+    sink_addr.sin_port = htons(SINK_PORT);
+    sink_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+    sleep_millis(1000);
+
+    printf("\n");
+
+    printf("create AooSource\n");
+    AooError e;
+    source = AooSource_new(SOURCE_ID, 0, &e);
+    if (!source) {
+        printf("couldn't create: %s\n", aoo_strerror(e));
+        goto restart;
+    }
+    printf("AooSource: set event handler\n");
+    AooSource_setEventHandler(source, myEventHandler, source, kAooEventModePoll);
+    printf("AooSource: set xrun detection\n");
+    AooSource_setXRunDetection(source, kAooFalse);
+    printf("AooSource: set dynamic resampling\n");
+    AooSource_setDynamicResampling(source, kAooFalse);
+    printf("AooSource: set buffer size\n");
+    AooSource_setBufferSize(source, 0.025);
+    printf("AooSource: set resend buffer size\n");
+    AooSource_setResendBufferSize(source, 0);
+    printf("AooSource: setup\n");
+    AooSource_setup(source, SAMPLERATE, BLOCKSIZE, CHANNELS);
+    printf("AooSource: add sink\n");
+    AooEndpoint ep;
+    ep.address = &sink_addr;
+    ep.addrlen = sizeof(sink_addr);
+    ep.id = SINK_ID;
+    AooSource_addSink(source, &ep, kAooSinkActive);
+
+    printf("\n");
+
+    printf("create AooSink\n");
+    sink = AooSink_new(SINK_ID, 0, &e);
+    if (!sink) {
+        printf("couldn't create: %s\n", aoo_strerror(e));
+        goto restart;
+    }
+    printf("AooSink: set event handler\n");
+    AooSink_setEventHandler(sink, myEventHandler, source, kAooEventModePoll);
+    printf("AooSink: set dynamic resampling\n");
+    AooSink_setDynamicResampling(sink, kAooFalse);
+    printf("AooSink: set xrun detection\n");
+    AooSink_setXRunDetection(sink, kAooFalse);
+    printf("AooSink: set buffer size\n");
+    AooSink_setBufferSize(sink, SINK_BUFSIZE * 0.001);
+    printf("AooSink: set resend data\n");
+    AooSink_setResendData(sink, kAooFalse);
+    printf("AooSink: setup\n");
+    AooSink_setup(sink, SAMPLERATE, BLOCKSIZE, CHANNELS);
+
+    printf("\n");
+
+    printf("AooSource: set format\n");
+#ifdef CODEC_PCM
+    AooFormatPcm format;
+    AooFormatPcm_init(&format, FORMAT_CHANNELS, FORMAT_SAMPLERATE,
+                      FORMAT_BLOCKSIZE, kAooPcmFloat32);
 #endif
-#elif CONFIG_ETH_USE_SPI_ETHERNET
-    gpio_install_isr_service(0);
-    spi_device_handle_t spi_handle = NULL;
-    spi_bus_config_t buscfg = {
-        .miso_io_num = CONFIG_EXAMPLE_ETH_SPI_MISO_GPIO,
-        .mosi_io_num = CONFIG_EXAMPLE_ETH_SPI_MOSI_GPIO,
-        .sclk_io_num = CONFIG_EXAMPLE_ETH_SPI_SCLK_GPIO,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-    };
-    ESP_ERROR_CHECK(spi_bus_initialize(CONFIG_EXAMPLE_ETH_SPI_HOST, &buscfg, 1));
-#if CONFIG_EXAMPLE_USE_DM9051
-    spi_device_interface_config_t devcfg = {
-        .command_bits = 1,
-        .address_bits = 7,
-        .mode = 0,
-        .clock_speed_hz = CONFIG_EXAMPLE_ETH_SPI_CLOCK_MHZ * 1000 * 1000,
-        .spics_io_num = CONFIG_EXAMPLE_ETH_SPI_CS_GPIO,
-        .queue_size = 20
-    };
-    ESP_ERROR_CHECK(spi_bus_add_device(CONFIG_EXAMPLE_ETH_SPI_HOST, &devcfg, &spi_handle));
-    /* dm9051 ethernet driver is based on spi driver */
-    eth_dm9051_config_t dm9051_config = ETH_DM9051_DEFAULT_CONFIG(spi_handle);
-    dm9051_config.int_gpio_num = CONFIG_EXAMPLE_ETH_SPI_INT_GPIO;
-    esp_eth_mac_t *mac = esp_eth_mac_new_dm9051(&dm9051_config, &mac_config);
-    esp_eth_phy_t *phy = esp_eth_phy_new_dm9051(&phy_config);
-#elif CONFIG_EXAMPLE_USE_W5500
-    spi_device_interface_config_t devcfg = {
-        .command_bits = 16, // Actually it's the address phase in W5500 SPI frame
-        .address_bits = 8,  // Actually it's the control phase in W5500 SPI frame
-        .mode = 0,
-        .clock_speed_hz = CONFIG_EXAMPLE_ETH_SPI_CLOCK_MHZ * 1000 * 1000,
-        .spics_io_num = CONFIG_EXAMPLE_ETH_SPI_CS_GPIO,
-        .queue_size = 20
-    };
-    ESP_ERROR_CHECK(spi_bus_add_device(CONFIG_EXAMPLE_ETH_SPI_HOST, &devcfg, &spi_handle));
-    /* w5500 ethernet driver is based on spi driver */
-    eth_w5500_config_t w5500_config = ETH_W5500_DEFAULT_CONFIG(spi_handle);
-    w5500_config.int_gpio_num = CONFIG_EXAMPLE_ETH_SPI_INT_GPIO;
-    esp_eth_mac_t *mac = esp_eth_mac_new_w5500(&w5500_config, &mac_config);
-    esp_eth_phy_t *phy = esp_eth_phy_new_w5500(&phy_config);
+#ifdef CODEC_OPUS
+    AooFormatOpus format;
+    AooFormatOpus_init(&format, FORMAT_CHANNELS, FORMAT_SAMPLERATE,
+                       FORMAT_BLOCKSIZE, OPUS_APPLICATION_AUDIO);
 #endif
-#endif // CONFIG_ETH_USE_SPI_ETHERNET
-    esp_eth_config_t config = ETH_DEFAULT_CONFIG(mac, phy);
-    esp_eth_handle_t eth_handle = NULL;
-    ESP_ERROR_CHECK(esp_eth_driver_install(&config, &eth_handle));
-#if !CONFIG_EXAMPLE_USE_INTERNAL_ETHERNET
-    /* The SPI Ethernet module might doesn't have a burned factory MAC address, we cat to set it manually.
-       02:00:00 is a Locally Administered OUI range so should not be used except when testing on a LAN under your control.
-    */
-    ESP_ERROR_CHECK(esp_eth_ioctl(eth_handle, ETH_CMD_S_MAC_ADDR, (uint8_t[]) {
-        0x02, 0x00, 0x00, 0x12, 0x34, 0x56
-    }));
-#endif
-    /* attach Ethernet driver to TCP/IP stack */
-    ESP_ERROR_CHECK(esp_netif_attach(eth_netif, esp_eth_new_netif_glue(eth_handle)));
-    /* start Ethernet driver state machine */
-    ESP_ERROR_CHECK(esp_eth_start(eth_handle));
+    AooSource_setFormat(source, &format.header);
 
-    aoo_initialize();
+    printf("AooSource: start stream\n");
+    AooSource_startStream(source, NULL);
 
-    ESP_LOGI(TAG, "AOO version: %s\n", aoo_getVersionString());
+    printf("\n");
 
-    AooSource *source = AooSource_new(0, 0, NULL);
-    AooSink *sink = AooSink_new(0, 0, NULL);
-    struct sockaddr_in sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sin_family = AF_INET;
-    sa.sin_addr.s_addr = htonl(0x7F000001);
-    sa.sin_port = htons(50000);
-    AooClient *client = AooClient_new(&sa, sizeof(sa), 0, NULL);
-    AooServer *server = AooServer_new(40000, 0, NULL);
+    for (int k = 0; k < NUMLOOPS; ++k) {
+        printf("# loop iteration %d\n\n", k);
 
-    AooSource_free(source);
-    AooSink_free(sink);
-    AooClient_free(client);
-    AooServer_free(server);
+        printf("send audio\n---\n");
+        for (int i = 0; i < NUMBLOCKS; ++i) {
+            printf("send block %d\n", i);
+            AooSample *inChannels[CHANNELS];
+            for (int i = 0; i < CHANNELS; ++i) {
+                inChannels[i] = input[i] + (i * BLOCKSIZE);
+            }
+            AooNtpTime t = aoo_getCurrentNtpTime();
+            AooSource_process(source, inChannels, BLOCKSIZE, t);
+            AooSource_send(source, mySendFunction, sink);
+            printf("---\n");
+        }
 
+        printf("\n");
 
-//    AooClient *aoo_client AooClient_new(
- //       const void *address, AooAddrSize addrlen,
-   //     AooFlag flags, AooError *err);
+        printf("receive audio\n---\n");
+        for (int i = 0; i < NUMBLOCKS; ++i) {
+            printf("receive block %d\n", i);
+            AooSample *outChannels[CHANNELS];
+            for (int i = 0; i < CHANNELS; ++i) {
+                outChannels[i] = output[i] + (i * BLOCKSIZE);
+            }
+            AooNtpTime t = aoo_getCurrentNtpTime();
+            AooSink_process(sink, outChannels, BLOCKSIZE, t);
+            AooSink_send(sink, mySendFunction, source);
+            AooSink_pollEvents(sink);
+            printf("---\n");
+        }
 
+        printf("AooSource: poll events\n");
+        AooSource_pollEvents(source);
+
+        printf("\n");
+    }
+
+restart:
+    if (source) {
+        printf("free AooSource\n");
+        AooSource_free(source);
+    }
+    printf("\n");
+    if (sink) {
+        printf("free AooSink\n");
+        AooSink_free(sink);
+    }
+    printf("\n");
+
+    printf("aoo_terminate()\n");
+    aoo_terminate();
+
+    for (int i = 10; i >= 0; i--) {
+        printf("Restarting in %d seconds...\n", i);
+        sleep_millis(1000);
+    }
+    printf("Restarting now.\n");
+    fflush(stdout);
+    esp_restart();
 }

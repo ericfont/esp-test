@@ -305,11 +305,10 @@ void app_main(void)
     }
 
 restart:
-// ignore free AooSource because results in exception crash
-//    if (source) {
-//        ESP_LOGI(TAG, "free AooSource\n");
-//        AooSource_free(source);
-//    }
+    if (source) {
+        ESP_LOGI(TAG, "free AooSource\n");
+        AooSource_free(source);
+    }
     ESP_LOGI(TAG, "\n");
     if (sink) {
         ESP_LOGI(TAG, "free AooSink\n");

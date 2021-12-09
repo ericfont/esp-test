@@ -2,8 +2,6 @@
 
 #include "ethernet_basic.h"
 
-#define AOO_NET_USE_IPv6 0
-
 #include "aoo/aoo_source.h"
 #include "aoo/aoo_sink.h"
 #include "aoo/codec/aoo_pcm.h"

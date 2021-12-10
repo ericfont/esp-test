@@ -29,21 +29,21 @@
 
 // "native" settings
 #define SAMPLERATE 44100
-#define BLOCKSIZE 256
+#define BLOCKSIZE 16
 #define CHANNELS 1
 
 // format settings (to test reblocking/resampling)
 #define FORMAT_SAMPLERATE 44100
-#define FORMAT_BLOCKSIZE 256
+#define FORMAT_BLOCKSIZE 16
 #define FORMAT_CHANNELS 1
 
 // we send/receive NUMBLOCKS * NUMLOOPS blocks
 
 // number of blocks to send in a row
 // to let AOO sink jitter buffer fill up
-#define NUMBLOCKS 8
+#define NUMBLOCKS 1
 // to test long term stability
-#define NUMLOOPS 8
+#define NUMLOOPS 1
 
 #define CODEC_PCM
 // #define CODEC_OPUS
@@ -68,12 +68,12 @@ AooInt32 AOO_CALL mySendFunction(
     ESP_LOGI(TAG, "mySendFunction: size %d, addrlen %d, flag %x, sin_family 0x%x, sin_port 0x%x, IPv4 addr %d.%d.%d.%d", size, addrlen, flag, dest_addr->sin_family, dest_addr->sin_port, bytesAddress[0], bytesAddress[1], bytesAddress[2], bytesAddress[3]);
 
 
-    // usually, you would send the packet to the specified
-    // socket address. here we just pass it directly to the source/sink.
     if (user == source) {
-        AooSource_handleMessage(user, data, size, address, addrlen);
+        //AooSource_handleMessage(user, data, size, address, addrlen);
+
+        
     } else if (user == sink) {
-        AooSink_handleMessage(user, data, size, address, addrlen);
+        //AooSink_handleMessage(user, data, size, address, addrlen);
 
         int err = sendto(sink_socket, data, size, 0, (struct sockaddr *) address, addrlen);
         if (err < 0) {
@@ -335,7 +335,9 @@ void app_main(void)
                 inChannels[i] = input[i] + (i * BLOCKSIZE);
             }
             AooNtpTime t = aoo_getCurrentNtpTime();
+            ESP_LOGI(TAG, "calling AooSource_process");
             AooSource_process(source, inChannels, BLOCKSIZE, t);
+            ESP_LOGI(TAG, "calling AooSource_send");
             AooSource_send(source, mySendFunction, sink);
             ESP_LOGI(TAG, "---\n");
         }
@@ -364,11 +366,21 @@ void app_main(void)
 
 restart:
     if (source) {
+        if (source_socket >= 0) {
+            ESP_LOGI(TAG, "Shutting down source_socket...");
+            shutdown(source_socket, 0);
+            close(source_socket);
+        }
         ESP_LOGI(TAG, "free AooSource\n");
         AooSource_free(source);
     }
     ESP_LOGI(TAG, "\n");
     if (sink) {
+        if (sink_socket >= 0) {
+            ESP_LOGI(TAG, "Shutting down sink_socket...");
+            shutdown(sink_socket, 0);
+            close(sink_socket);
+        }
         ESP_LOGI(TAG, "free AooSink\n");
         AooSink_free(sink);
     }

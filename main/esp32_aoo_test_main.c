@@ -24,7 +24,7 @@
 #define SOURCE_PORT 9998
 #define SOURCE_ID 0
 #define SINK_PORT 9999
-#define SINK_ID 0
+#define SINK_ID 1
 #define SINK_BUFSIZE 100
 
 // "native" settings

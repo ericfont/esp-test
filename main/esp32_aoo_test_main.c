@@ -56,15 +56,17 @@ AooSample output[CHANNELS][BLOCKSIZE * NUMBLOCKS];
 AooSource *source;
 AooSink *sink;
 
+int source_socket = -1;
+int sink_socket = -1;
+
 AooInt32 AOO_CALL mySendFunction(
         void *user, const AooByte *data, AooInt32 size,
         const void *address, AooAddrSize addrlen, AooFlag flag)
 {
-    ESP_LOGI(TAG, "mySendFunction: size %d, addrlen %d, flag %x, address bytes:", size, addrlen, flag);
-    const unsigned char *bytesAddress = address;
-    for (int i=0; i<addrlen; i++)
-        printf("%d ", bytesAddress[i]);
-    printf("\n");
+    struct sockaddr_in *dest_addr = (struct sockaddr_in *) address;
+    unsigned char *bytesAddress = &dest_addr->sin_addr;
+    ESP_LOGI(TAG, "mySendFunction: size %d, addrlen %d, flag %x, sin_family 0x%x, sin_port 0x%x, IPv4 addr %d.%d.%d.%d", size, addrlen, flag, dest_addr->sin_family, dest_addr->sin_port, bytesAddress[0], bytesAddress[1], bytesAddress[2], bytesAddress[3]);
+
 
     // usually, you would send the packet to the specified
     // socket address. here we just pass it directly to the source/sink.
@@ -72,6 +74,44 @@ AooInt32 AOO_CALL mySendFunction(
         AooSource_handleMessage(user, data, size, address, addrlen);
     } else if (user == sink) {
         AooSink_handleMessage(user, data, size, address, addrlen);
+
+        int err = sendto(sink_socket, data, size, 0, (struct sockaddr *) address, addrlen);
+        if (err < 0) {
+            ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
+            return -1;
+        }
+        ESP_LOGI(TAG, "Message sent");
+
+  /*      while (1) {
+
+            struct sockaddr_storage source_addr; // Large enough for both IPv4 or IPv6
+            socklen_t socklen = sizeof(source_addr);
+            int len = recvfrom(sock, rx_buffer, sizeof(rx_buffer) - 1, 0, (struct sockaddr *)&source_addr, &socklen);
+
+            // Error occurred during receiving
+            if (len < 0) {
+                ESP_LOGE(TAG, "recvfrom failed: errno %d", errno);
+                break;
+            }
+            // Data received
+            else {
+                rx_buffer[len] = 0; // Null-terminate whatever we received and treat like a string
+                ESP_LOGI(TAG, "Received %d bytes from %s:", len, host_ip);
+                ESP_LOGI(TAG, "%s", rx_buffer);
+                if (strncmp(rx_buffer, "OK: ", 4) == 0) {
+                    ESP_LOGI(TAG, "Received expected message, reconnecting");
+                    break;
+                }
+            }
+
+            vTaskDelay(2000 / portTICK_PERIOD_MS);
+        }
+
+        if (sock != -1) {
+            ESP_LOGE(TAG, "Shutting down socket and restarting...");
+            shutdown(sock, 0);
+            close(sock);
+        }*/
     } else {
         ESP_LOGI(TAG, "mySendFunction: bug\n");
     }
@@ -195,11 +235,23 @@ void app_main(void)
     source_addr.sin_family = AF_INET;
     source_addr.sin_port = htons(SOURCE_PORT);
     source_addr.sin_addr.s_addr = inet_addr("192.168.1.6");//htonl(INADDR_LOOPBACK);
+    source_socket = socket(source_addr.sin_family, SOCK_DGRAM, IPPROTO_IP);
+    if (source_socket < 0) {
+        ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
+        goto restart;
+    }
+    ESP_LOGI(TAG, "source_socket created: #%d", source_socket);
 
     struct sockaddr_in sink_addr;
     sink_addr.sin_family = AF_INET;
     sink_addr.sin_port = htons(SINK_PORT);
     sink_addr.sin_addr.s_addr = inet_addr("192.168.1.6");//htonl(INADDR_LOOPBACK);
+    sink_socket = socket(sink_addr.sin_family, SOCK_DGRAM, IPPROTO_IP);
+    if (sink_socket < 0) {
+        ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
+        goto restart;
+    }
+    ESP_LOGI(TAG, "sink_socket created: #%d", sink_socket);
 
     sleep_millis(1000);
 

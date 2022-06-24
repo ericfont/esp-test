@@ -1,4 +1,4 @@
 [submodule "main/aoo"]
 	path = main/aoo
-	url = https://git.iem.at/cm/aoo.git
+	url = https://github.com/ericfont/aoo.git
 	branch = develop

@@ -5,8 +5,8 @@
 #include "aoo/aoo_source.h"
 #include "aoo/aoo_sink.h"
 #include "aoo/codec/aoo_pcm.h"
-#define AOO_OPUS_MULTISTREAM_H "opus/include/opus_multistream.h"
-#include "aoo/codec/aoo_opus.h"
+//#define AOO_OPUS_MULTISTREAM_H "opus/include/opus_multistream.h"
+//#include "aoo/codec/aoo_opus.h"
 
 #include <stdio.h>
 #include <math.h>
@@ -220,7 +220,10 @@ void app_main(void)
 
     ESP_LOGI(TAG, "try to aoo_initialize()\n");
 
-    aoo_initializeEx(myLogFunction, NULL);
+    AooSettings settings;
+    AooSettings_init(&settings);
+    settings.logFunc = myLogFunction;
+    aoo_initialize(&settings);
 
     ESP_LOGI(TAG, "create input signal\n");
     for (int i = 0; i < (NUMBLOCKS * BLOCKSIZE); ++i) {

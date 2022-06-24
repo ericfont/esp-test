@@ -4,7 +4,6 @@ idf_component_register(
 
 # disable warning in Opus library treated as error
 add_compile_options("-Wno-error=maybe-uninitialized")
-
 add_subdirectory(aoo EXCLUDE_FROM_ALL)
 
 target_link_libraries(${COMPONENT_LIB} PUBLIC AOO_STATIC)

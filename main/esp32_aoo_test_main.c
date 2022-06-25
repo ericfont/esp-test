@@ -28,20 +28,20 @@
 #define SINK_BUFSIZE 100
 
 // "native" settings
-#define SAMPLERATE 44100
-#define BLOCKSIZE 16
+#define SAMPLERATE 48000
+#define BLOCKSIZE 512
 #define CHANNELS 1
 
 // format settings (to test reblocking/resampling)
-#define FORMAT_SAMPLERATE 44100
-#define FORMAT_BLOCKSIZE 16
+#define FORMAT_SAMPLERATE 48000
+#define FORMAT_BLOCKSIZE 512
 #define FORMAT_CHANNELS 1
 
 // we send/receive NUMBLOCKS * NUMLOOPS blocks
 
 // number of blocks to send in a row
 // to let AOO sink jitter buffer fill up
-#define NUMBLOCKS 1
+#define NUMBLOCKS 20
 // to test long term stability
 #define NUMLOOPS 1
 
@@ -227,7 +227,8 @@ void app_main(void)
 
     ESP_LOGI(TAG, "create input signal\n");
     for (int i = 0; i < (NUMBLOCKS * BLOCKSIZE); ++i) {
-        AooSample value = sin((AooSample)i / BLOCKSIZE);
+        float pitchFreq = 100;
+        AooSample value = sin(2.0f * M_PI * pitchFreq * i / SAMPLERATE);
         for (int j = 0; j < CHANNELS; ++j) {
             input[j][i] = value;
         }
@@ -313,7 +314,7 @@ void app_main(void)
 #ifdef CODEC_PCM
     AooFormatPcm format;
     AooFormatPcm_init(&format, FORMAT_CHANNELS, FORMAT_SAMPLERATE,
-                      FORMAT_BLOCKSIZE, kAooPcmFloat32);
+                      FORMAT_BLOCKSIZE, kAooPcmInt8);
 #endif
 #ifdef CODEC_OPUS
     AooFormatOpus format;
@@ -334,8 +335,8 @@ void app_main(void)
         for (int i = 0; i < NUMBLOCKS; ++i) {
             ESP_LOGI(TAG, "send block %d\n", i);
             AooSample *inChannels[CHANNELS];
-            for (int i = 0; i < CHANNELS; ++i) {
-                inChannels[i] = input[i] + (i * BLOCKSIZE);
+            for (int j = 0; j < CHANNELS; ++j) {
+                inChannels[j] = input[j] + (i * BLOCKSIZE);
             }
             AooNtpTime t = aoo_getCurrentNtpTime();
             ESP_LOGI(TAG, "calling AooSource_process");
@@ -351,8 +352,8 @@ void app_main(void)
         for (int i = 0; i < NUMBLOCKS; ++i) {
             ESP_LOGI(TAG, "receive block %d\n", i);
             AooSample *outChannels[CHANNELS];
-            for (int i = 0; i < CHANNELS; ++i) {
-                outChannels[i] = output[i] + (i * BLOCKSIZE);
+            for (int j = 0; j < CHANNELS; ++j) {
+                outChannels[j] = output[j] + (i * BLOCKSIZE);
             }
             AooNtpTime t = aoo_getCurrentNtpTime();
             AooSink_process(sink, outChannels, BLOCKSIZE, t);
